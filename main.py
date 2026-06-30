@@ -1,28 +1,50 @@
-import os
-from fastapi import FastAPI, HTTPException
-import redis
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from collections import defaultdict
+
+API_KEY = "ak_fjtd1j7ylx8f6k6yzneri68d"
+EMAIL_ADDR = "24f2000961@ds.study.iitm.ac.in"
 
 app = FastAPI()
 
-r = redis.Redis(host=os.environ.get("REDIS_HOST", "redis"), port=6379, db=0, decode_responses=True)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
-@app.get("/healthz")
-async def healthz():
-    try:
-        pong = r.ping()
-        return {"status": "ok", "redis": "up" if pong else "down"}
-    except Exception:
-        return {"status": "ok", "redis": "down"}
+@app.post("/analytics")
+async def analytics(request: Request):
+    api_key = request.headers.get("x-api-key")
+    if api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
+    body = await request.json()
+    events = body.get("events", [])
 
-@app.post("/hit/{key}")
-async def hit(key: str):
-    count = r.incr(f"counter:{key}")
-    return {"key": key, "count": count}
+    total_events = len(events)
+    users = set()
+    revenue = 0.0
+    user_totals = defaultdict(float)
 
+    for ev in events:
+        user = ev.get("user")
+        amount = ev.get("amount", 0)
+        if user is not None:
+            users.add(user)
+        if amount is not None and amount > 0:
+            revenue += amount
+            if user is not None:
+                user_totals[user] += amount
 
-@app.get("/count/{key}")
-async def count(key: str):
-    val = r.get(f"counter:{key}")
-    return {"key": key, "count": int(val) if val is not None else 0}
+    top_user = max(user_totals, key=user_totals.get) if user_totals else None
+
+    return {
+        "email": EMAIL_ADDR,
+        "total_events": total_events,
+        "unique_users": len(users),
+        "revenue": round(revenue, 2),
+        "top_user": top_user,
+    }
